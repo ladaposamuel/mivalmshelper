@@ -15,13 +15,17 @@ A browser extension built with Plasmo that helps students track their learning p
 
 1. **Clone or download this project**
 2. **Install dependencies**:
+
    ```bash
    npm install
    ```
+
 3. **Start development server**:
+
    ```bash
    npm run dev
    ```
+
 4. **Load in browser**:
    - Open Chrome/Edge and go to `chrome://extensions/`
    - Enable "Developer mode"
@@ -30,10 +34,13 @@ A browser extension built with Plasmo that helps students track their learning p
 ### Production Build
 
 1. **Build the extension**:
+
    ```bash
    npm run build
    ```
+
 2. **Package for distribution**:
+
    ```bash
    npm run package
    ```
@@ -49,16 +56,19 @@ A browser extension built with Plasmo that helps students track their learning p
 ## How It Works
 
 ### Automatic Tracking
+
 - The extension detects when you visit course activities (videos, PDFs, quizzes, etc.)
 - It extracts course and activity information from the page URL and content
 - Progress is automatically saved to local browser storage
 
 ### Visual Feedback
+
 - Green checkmarks (✅) appear next to completed activities
 - Hover over checkmarks to see completion dates
 - Progress bars show overall course completion percentage
 
 ### Data Storage
+
 - All progress data is stored locally in your browser
 - No data is sent to external servers
 - You can clear all progress data from the popup if needed
@@ -79,6 +89,7 @@ A browser extension built with Plasmo that helps students track their learning p
 ## Development
 
 Built with:
+
 - [Plasmo Framework](https://www.plasmo.com/) - Modern browser extension framework
 - React + TypeScript
 - Chrome Extension APIs
@@ -105,16 +116,19 @@ miva-lms-helper/
 ## Troubleshooting
 
 **Extension not working?**
+
 - Make sure you're on `lms.miva.university`
 - Check that the extension is enabled in your browser
 - Try refreshing the page
 
 **Progress not saving?**
+
 - Check browser storage permissions
 - Ensure you're logged into Miva LMS
 - Try clearing and re-adding the extension
 
 **Visual indicators not showing?**
+
 - Course navigation structure may have changed
 - Try visiting the course main page first
 - Check browser console for any errors

@@ -21,6 +21,7 @@ function IndexPopup() {
   useEffect(() => {
     const loadData = async () => {
       try {
+        await storage.init()
         const [allCourses, studyListData] = await Promise.all([
           storage.getAllCourses(),
           storage.getStudyList()
@@ -65,6 +66,12 @@ function IndexPopup() {
 
   const openCourse = (courseUrl: string) => {
     chrome.tabs.create({ url: courseUrl })
+  }
+
+  const openAllStudyListCourses = () => {
+    studyList.forEach((course) => {
+      chrome.tabs.create({ url: course.courseUrl, active: false })
+    })
   }
 
   const getLastActivityDate = (course: CourseInfo): string => {
@@ -139,9 +146,29 @@ function IndexPopup() {
                 Current semester courses
               </p>
             </div>
-            <span style={{ color: colors.white, fontSize: "18px" }}>
-              {studyListExpanded ? "v" : ">"}
-            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: spacing.sm }}>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  openAllStudyListCourses()
+                }}
+                style={{
+                  background: "rgba(255,255,255,0.2)",
+                  color: colors.white,
+                  border: "1px solid rgba(255,255,255,0.3)",
+                  padding: "4px 10px",
+                  borderRadius: borderRadius.sm,
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  cursor: "pointer"
+                }}
+                title="Open all courses in new tabs">
+                Open All
+              </button>
+              <span style={{ color: colors.white, fontSize: "18px" }}>
+                {studyListExpanded ? "v" : ">"}
+              </span>
+            </div>
           </div>
 
           {studyListExpanded && (

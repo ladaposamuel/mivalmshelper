@@ -8,6 +8,11 @@ export function extractActivityIdFromHref(href: string): string | null {
   return match ? match[1] : null
 }
 
+export function extractActivityFromUrl(url: string): { type: string; id: string } | null {
+  const match = url.match(/mod\/(\w+)\/view\.php\?id=(\d+)/)
+  return match ? { type: match[1], id: match[2] } : null
+}
+
 export function extractCourseIdFromHref(href: string): string | null {
   const match = href.match(/course\/view\.php\?id=(\d+)/)
   return match ? match[1] : null

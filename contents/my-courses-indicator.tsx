@@ -36,6 +36,7 @@ const MyCoursesProgressIndicator = () => {
     isProcessing = true
 
     try {
+      await storage.init()
       const [allCourses, studyListData] = await Promise.all([
         storage.getAllCourses(),
         storage.getStudyList()
@@ -326,10 +327,15 @@ const MyCoursesProgressIndicator = () => {
             <span style="background: rgba(255,255,255,0.2); color: ${colors.white}; padding: 2px 8px; border-radius: ${borderRadius.full}; font-size: 12px; font-weight: 500;">${studyListCache.length} courses</span>
           </h2>
         </div>
-        <button id="toggle-study-list" style="background: transparent; border: none; color: rgba(255,255,255,0.8); cursor: pointer; font-size: 12px; display: flex; align-items: center; gap: 4px;">
-          <span id="toggle-text">Collapse</span>
-          <span id="toggle-icon" style="font-size: 10px;">^</span>
-        </button>
+        <div style="display: flex; align-items: center; gap: ${spacing.sm};">
+          <button id="open-all-study-list" style="background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3); color: rgba(255,255,255,0.9); cursor: pointer; font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: ${borderRadius.sm}; display: flex; align-items: center; gap: 4px; transition: all 0.2s ease;" title="Open all courses in new tabs">
+            Open All
+          </button>
+          <button id="toggle-study-list" style="background: transparent; border: none; color: rgba(255,255,255,0.8); cursor: pointer; font-size: 12px; display: flex; align-items: center; gap: 4px;">
+            <span id="toggle-text">Collapse</span>
+            <span id="toggle-icon" style="font-size: 10px;">^</span>
+          </button>
+        </div>
       </div>
       <div id="study-list-content" style="padding: ${spacing.lg}; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: ${spacing.md};">
         ${studyListHtml}
@@ -360,6 +366,23 @@ const MyCoursesProgressIndicator = () => {
         content.style.display = isCollapsed ? "grid" : "none"
         if (toggleText) toggleText.textContent = isCollapsed ? "Collapse" : "Expand"
         if (toggleIcon) toggleIcon.textContent = isCollapsed ? "^" : "v"
+      })
+    }
+
+    const openAllBtn = section.querySelector("#open-all-study-list") as HTMLElement
+    if (openAllBtn) {
+      openAllBtn.addEventListener("mouseenter", () => {
+        openAllBtn.style.background = "rgba(255,255,255,0.25)"
+      })
+      openAllBtn.addEventListener("mouseleave", () => {
+        openAllBtn.style.background = "rgba(255,255,255,0.15)"
+      })
+      openAllBtn.addEventListener("click", (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        studyListCache.forEach((course) => {
+          window.open(course.courseUrl, "_blank")
+        })
       })
     }
 

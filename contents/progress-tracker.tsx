@@ -17,6 +17,46 @@ export const config: PlasmoCSConfig = {
   all_frames: false
 }
 
+/**
+ * Attempts to resolve the human-readable course name using, in order:
+ *  1. Common Moodle page-header selectors
+ *  2. The study list entry (which was captured from the My Courses page and
+ *     always has the real name)
+ *  3. The previously-stored name (so we never downgrade to "Unknown Course"
+ *     if the page hasn't fully loaded yet)
+ */
+async function resolveCourseNameForId(
+  courseId: string,
+  storedName?: string
+): Promise<string> {
+  const pageSelectors = [
+    ".page-header-headings h1",
+    "#page-header h1",
+    "h1.h2",
+    ".course-fullname",
+    '[data-region="course-name"]',
+    ".breadcrumb-item:last-child a",
+    ".breadcrumb-item a"
+  ]
+
+  for (const selector of pageSelectors) {
+    const text = document.querySelector(selector)?.textContent?.trim()
+    if (text && text.length > 3 && text !== "Unknown Course") return text
+  }
+
+  try {
+    const studyList = await storage.getStudyList()
+    const entry = studyList.find((c) => c.courseId === courseId)
+    if (entry?.courseName) return entry.courseName
+  } catch {
+    // non-critical
+  }
+
+  return storedName && storedName !== "Unknown Course"
+    ? storedName
+    : "Unknown Course"
+}
+
 const ProgressTracker = () => {
   const [progress, setProgress] = useState<CourseInfo | null>(null)
 
@@ -26,13 +66,11 @@ const ProgressTracker = () => {
       const courseId = extractCourseIdFromUrl(url)
       if (!courseId) return
 
-      const breadcrumbLink = document.querySelector(".breadcrumb-item a")
-      const courseName =
-        breadcrumbLink?.textContent?.trim() || "Unknown Course"
-
       try {
         await storage.init()
         let courseInfo = await storage.getCourse(courseId)
+
+        const courseName = await resolveCourseNameForId(courseId, courseInfo?.courseName)
 
         if (!courseInfo) {
           const scrapedData = CourseIndexScraper.scrapeCourseIndex(courseId)
@@ -51,10 +89,8 @@ const ProgressTracker = () => {
             courseInfo.courseName = courseName
           }
           const scrapedData = CourseIndexScraper.scrapeCourseIndex(courseId)
-          courseInfo.totalActivities = Math.max(
-            courseInfo.totalActivities,
-            scrapedData.totalCount
-          )
+          courseInfo.totalActivities = scrapedData.totalCount
+
           scrapedData.activities.forEach((activity) => {
             if (!courseInfo!.activities[activity.id]) {
               courseInfo!.activities[activity.id] = activity
@@ -62,6 +98,18 @@ const ProgressTracker = () => {
               courseInfo!.activities[activity.id].name = activity.name
               courseInfo!.activities[activity.id].sectionName =
                 activity.sectionName
+              if (activity.completed && !courseInfo!.activities[activity.id].completed) {
+                courseInfo!.activities[activity.id].completed = true
+                courseInfo!.activities[activity.id].completedAt =
+                  activity.completedAt || new Date().toISOString()
+              }
+            }
+          })
+
+          const scrapedIds = new Set(scrapedData.activities.map(a => a.id))
+          Object.keys(courseInfo.activities).forEach(id => {
+            if (!scrapedIds.has(id)) {
+              delete courseInfo!.activities[id]
             }
           })
         }

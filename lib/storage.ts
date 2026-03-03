@@ -1,13 +1,11 @@
-// Enhanced storage utility using IndexedDB for better performance and structure
-
 export interface ActivityInfo {
   id: string
   name: string
   completed: boolean
   completedAt?: string
-  type: string // 'video', 'pdf', 'quiz', etc.
+  type: string
   sectionName?: string
-  weekNumber?: number // Week grouping for activities
+  weekNumber?: number
 }
 
 export interface CourseInfo {
@@ -27,26 +25,78 @@ export interface StudyListCourse {
   addedAt: string
 }
 
+/**
+ * Wraps chrome.storage.local and chrome.storage.sync for the LMS helper.
+ *
+ * Study list data is written to sync storage (primary) so it survives profile
+ * resets and syncs across devices, with local storage kept as a fast-read
+ * cache/fallback for when sync is unavailable. Course progress data stays in
+ * local storage only — it can be large and is easily re-derived by visiting a
+ * course page, so it does not need cross-device durability.
+ */
 class LMSStorage {
-  private storagePrefix = "miva_lms_"
+  private readonly localPrefix = "miva_lms_"
+  private readonly syncPrefix = "miva_lms_sync_"
+  private readonly syncStudyListKey = "miva_lms_sync_study_list"
+  private readonly localStudyListKey = "miva_lms_study_list"
 
+  /**
+   * Must be called once on extension startup. Migrates any study list data
+   * that was previously stored only in local storage over to sync storage.
+   */
   async init(): Promise<void> {
-    // Chrome storage doesn't need initialization
-    console.log("Chrome storage initialized")
-    return Promise.resolve()
+    await this.migrateStudyListToSync()
+  }
+
+  private migrateStudyListToSync(): Promise<void> {
+    return new Promise((resolve) => {
+      chrome.storage.local.get([this.localStudyListKey], (localResult) => {
+        if (chrome.runtime.lastError || !localResult[this.localStudyListKey]?.length) {
+          resolve()
+          return
+        }
+
+        const localList: StudyListCourse[] = localResult[this.localStudyListKey]
+
+        chrome.storage.sync.get([this.syncStudyListKey], (syncResult) => {
+          if (chrome.runtime.lastError) {
+            resolve()
+            return
+          }
+
+          const syncList: StudyListCourse[] = syncResult[this.syncStudyListKey] || []
+          const syncIds = new Set(syncList.map((c) => c.courseId))
+          const merged = [
+            ...syncList,
+            ...localList.filter((c) => !syncIds.has(c.courseId))
+          ]
+
+          chrome.storage.sync.set({ [this.syncStudyListKey]: merged }, () => {
+            if (chrome.runtime.lastError) {
+              console.error("Study list migration to sync failed:", chrome.runtime.lastError)
+              resolve()
+              return
+            }
+
+            chrome.storage.local.remove([this.localStudyListKey], () => {
+              console.log(`Migrated ${localList.length} study list courses to sync storage`)
+              resolve()
+            })
+          })
+        })
+      })
+    })
   }
 
   async saveCourse(courseInfo: CourseInfo): Promise<void> {
     return new Promise((resolve, reject) => {
       courseInfo.lastUpdated = new Date().toISOString()
-      const key = `${this.storagePrefix}course_${courseInfo.courseId}`
+      const key = `${this.localPrefix}course_${courseInfo.courseId}`
 
       chrome.storage.local.set({ [key]: courseInfo }, () => {
         if (chrome.runtime.lastError) {
-          console.error("Failed to save course:", chrome.runtime.lastError)
           reject(chrome.runtime.lastError)
         } else {
-          console.log("Course saved successfully:", courseInfo.courseId)
           resolve()
         }
       })
@@ -55,20 +105,13 @@ class LMSStorage {
 
   async getCourse(courseId: string): Promise<CourseInfo | null> {
     return new Promise((resolve, reject) => {
-      const key = `${this.storagePrefix}course_${courseId}`
+      const key = `${this.localPrefix}course_${courseId}`
 
       chrome.storage.local.get([key], (result) => {
         if (chrome.runtime.lastError) {
-          console.error("Failed to get course:", chrome.runtime.lastError)
           reject(chrome.runtime.lastError)
         } else {
-          const courseInfo = result[key] || null
-          console.log(
-            "Retrieved course:",
-            courseId,
-            courseInfo ? "found" : "not found"
-          )
-          resolve(courseInfo)
+          resolve(result[key] ?? null)
         }
       })
     })
@@ -78,20 +121,18 @@ class LMSStorage {
     return new Promise((resolve, reject) => {
       chrome.storage.local.get(null, (result) => {
         if (chrome.runtime.lastError) {
-          console.error("Failed to get all courses:", chrome.runtime.lastError)
           reject(chrome.runtime.lastError)
-        } else {
-          const courses: CourseInfo[] = []
-
-          Object.keys(result).forEach((key) => {
-            if (key.startsWith(`${this.storagePrefix}course_`)) {
-              courses.push(result[key])
-            }
-          })
-
-          console.log("Retrieved all courses:", courses.length)
-          resolve(courses)
+          return
         }
+
+        const courses: CourseInfo[] = []
+        for (const key of Object.keys(result)) {
+          if (key.startsWith(`${this.localPrefix}course_`)) {
+            courses.push(result[key])
+          }
+        }
+
+        resolve(courses)
       })
     })
   }
@@ -104,8 +145,8 @@ class LMSStorage {
           return
         }
 
-        const keysToRemove = Object.keys(result).filter((key) =>
-          key.startsWith(this.storagePrefix)
+        const keysToRemove = Object.keys(result).filter((k) =>
+          k.startsWith(this.localPrefix)
         )
 
         if (keysToRemove.length === 0) {
@@ -115,104 +156,136 @@ class LMSStorage {
 
         chrome.storage.local.remove(keysToRemove, () => {
           if (chrome.runtime.lastError) {
-            console.error("Failed to clear storage:", chrome.runtime.lastError)
             reject(chrome.runtime.lastError)
           } else {
-            console.log("Storage cleared successfully")
             resolve()
           }
+        })
+      })
+    })
+  }
+
+  /**
+   * Reads the study list from sync storage, falling back to local storage if
+   * sync is unavailable (e.g. user not signed into Chrome, sync disabled).
+   */
+  async getStudyList(): Promise<StudyListCourse[]> {
+    return new Promise((resolve) => {
+      chrome.storage.sync.get([this.syncStudyListKey], (syncResult) => {
+        if (!chrome.runtime.lastError && syncResult[this.syncStudyListKey]) {
+          resolve(syncResult[this.syncStudyListKey])
+          return
+        }
+
+        chrome.storage.local.get([this.localStudyListKey], (localResult) => {
+          resolve(
+            chrome.runtime.lastError ? [] : (localResult[this.localStudyListKey] ?? [])
+          )
         })
       })
     })
   }
 
   async addToStudyList(course: StudyListCourse): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const key = `${this.storagePrefix}study_list`
-      chrome.storage.local.get([key], (result) => {
-        if (chrome.runtime.lastError) {
-          reject(chrome.runtime.lastError)
-          return
-        }
+    const current = await this.getStudyList()
+    if (current.some((c) => c.courseId === course.courseId)) return
 
-        const studyList: StudyListCourse[] = result[key] || []
-        
-        if (studyList.some(c => c.courseId === course.courseId)) {
-          resolve()
-          return
-        }
-
-        studyList.push(course)
-        chrome.storage.local.set({ [key]: studyList }, () => {
-          if (chrome.runtime.lastError) {
-            console.error("Failed to add to study list:", chrome.runtime.lastError)
-            reject(chrome.runtime.lastError)
-          } else {
-            console.log("Course added to study list:", course.courseId)
-            resolve()
-          }
-        })
-      })
-    })
+    const updated = [...current, course]
+    await this.writeStudyList(updated)
   }
 
   async removeFromStudyList(courseId: string): Promise<void> {
+    const current = await this.getStudyList()
+    const updated = current.filter((c) => c.courseId !== courseId)
+    await this.writeStudyList(updated)
+  }
+
+  async isInStudyList(courseId: string): Promise<boolean> {
+    const list = await this.getStudyList()
+    return list.some((c) => c.courseId === courseId)
+  }
+
+  /**
+   * Writes the study list to both sync (primary) and local (fallback cache),
+   * so a read never returns stale data even when sync is briefly unreachable.
+   */
+  private writeStudyList(list: StudyListCourse[]): Promise<void> {
     return new Promise((resolve, reject) => {
-      const key = `${this.storagePrefix}study_list`
-      chrome.storage.local.get([key], (result) => {
+      const syncWrite = new Promise<void>((res, rej) => {
+        chrome.storage.sync.set({ [this.syncStudyListKey]: list }, () => {
+          if (chrome.runtime.lastError) {
+            console.error("Study list sync write failed:", chrome.runtime.lastError)
+            rej(chrome.runtime.lastError)
+          } else {
+            res()
+          }
+        })
+      })
+
+      const localWrite = new Promise<void>((res, rej) => {
+        chrome.storage.local.set({ [this.localStudyListKey]: list }, () => {
+          if (chrome.runtime.lastError) {
+            rej(chrome.runtime.lastError)
+          } else {
+            res()
+          }
+        })
+      })
+
+      Promise.allSettled([syncWrite, localWrite]).then((results) => {
+        const syncResult = results[0]
+        const localResult = results[1]
+
+        if (syncResult.status === "fulfilled" || localResult.status === "fulfilled") {
+          resolve()
+        } else {
+          reject(new Error("Study list write failed in both sync and local storage"))
+        }
+      })
+    })
+  }
+
+  async markActivityCompleted(
+    activityId: string
+  ): Promise<{ courseId: string; courseName: string } | null> {
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.get(null, (result) => {
         if (chrome.runtime.lastError) {
           reject(chrome.runtime.lastError)
           return
         }
 
-        const studyList: StudyListCourse[] = result[key] || []
-        const updatedList = studyList.filter(c => c.courseId !== courseId)
+        for (const key of Object.keys(result)) {
+          if (!key.startsWith(`${this.localPrefix}course_`)) continue
 
-        chrome.storage.local.set({ [key]: updatedList }, () => {
-          if (chrome.runtime.lastError) {
-            console.error("Failed to remove from study list:", chrome.runtime.lastError)
-            reject(chrome.runtime.lastError)
-          } else {
-            console.log("Course removed from study list:", courseId)
-            resolve()
+          const course: CourseInfo = result[key]
+          if (!course.activities[activityId]) continue
+
+          if (course.activities[activityId].completed) {
+            resolve({ courseId: course.courseId, courseName: course.courseName })
+            return
           }
-        })
-      })
-    })
-  }
 
-  async getStudyList(): Promise<StudyListCourse[]> {
-    return new Promise((resolve, reject) => {
-      const key = `${this.storagePrefix}study_list`
-      chrome.storage.local.get([key], (result) => {
-        if (chrome.runtime.lastError) {
-          console.error("Failed to get study list:", chrome.runtime.lastError)
-          reject(chrome.runtime.lastError)
-        } else {
-          const studyList: StudyListCourse[] = result[key] || []
-          console.log("Retrieved study list:", studyList.length, "courses")
-          resolve(studyList)
-        }
-      })
-    })
-  }
+          course.activities[activityId].completed = true
+          course.activities[activityId].completedAt = new Date().toISOString()
+          course.lastUpdated = new Date().toISOString()
 
-  async isInStudyList(courseId: string): Promise<boolean> {
-    return new Promise((resolve, reject) => {
-      const key = `${this.storagePrefix}study_list`
-      chrome.storage.local.get([key], (result) => {
-        if (chrome.runtime.lastError) {
-          reject(chrome.runtime.lastError)
-        } else {
-          const studyList: StudyListCourse[] = result[key] || []
-          resolve(studyList.some(c => c.courseId === courseId))
+          chrome.storage.local.set({ [key]: course }, () => {
+            if (chrome.runtime.lastError) {
+              reject(chrome.runtime.lastError)
+            } else {
+              resolve({ courseId: course.courseId, courseName: course.courseName })
+            }
+          })
+          return
         }
+
+        resolve(null)
       })
     })
   }
 }
 
-// Course index scraper to get all available activities
 export class CourseIndexScraper {
   static scrapeCourseIndex(courseId: string): {
     activities: ActivityInfo[]
@@ -220,25 +293,19 @@ export class CourseIndexScraper {
   } {
     const activities: ActivityInfo[] = []
 
-    // First try to scrape from the navigation dropdown menu (more reliable for this LMS)
     const dropdownMenu = document.querySelector(
       "#courseActivities .focus-dropdown-menu"
     )
 
     if (dropdownMenu) {
-      // Get all accordion cards in the dropdown
       const accordionCards = dropdownMenu.querySelectorAll(".accordion .card")
 
       accordionCards.forEach((card) => {
-        // Get section name from the card header
         const cardHeader = card.querySelector(".card-header h5")
         const sectionName = cardHeader?.textContent?.trim() || "General"
-
-        // Extract week number from section name (e.g., "Week 1", "Module 2", etc.)
         const weekMatch = sectionName.match(/(?:week|module|chapter)\s*(\d+)/i)
         const weekNumber = weekMatch ? parseInt(weekMatch[1]) : null
 
-        // Get all activity links within the card body
         const cardBody = card.querySelector(".card-body")
         if (cardBody) {
           const activityLinks = cardBody.querySelectorAll(
@@ -254,52 +321,44 @@ export class CourseIndexScraper {
 
             const activityType = activityMatch[1]
             const activityId = activityMatch[2]
-
-            // Get activity name from h5 element within the link
             const activityName =
               link.querySelector("h5")?.textContent?.trim() ||
               link.textContent?.trim() ||
               "Unknown Activity"
 
+            const isCompleted = CourseIndexScraper.detectCompletion(link)
             activities.push({
               id: activityId,
               name: activityName,
-              completed: false,
+              completed: isCompleted,
+              completedAt: isCompleted ? new Date().toISOString() : undefined,
               type: activityType,
-              sectionName: sectionName,
-              weekNumber: weekNumber
+              sectionName,
+              weekNumber
             })
           })
         }
       })
     }
 
-    // Fallback: try course index content if dropdown is not available
     if (activities.length === 0) {
       const courseIndex =
         document.querySelector("#courseindex-content") ||
         document.querySelector(".courseindex")
 
       if (courseIndex) {
-        // Get all section divs (div elements with id starting with "courseindex-section")
         const sectionDivs = courseIndex.querySelectorAll(
           'div[id^="courseindex-section"]'
         )
 
         sectionDivs.forEach((sectionDiv) => {
-          // Get section name from the section header
           const sectionHeader = sectionDiv.querySelector(
             'h3, .section-title, [data-region="header"] h3, .course-section-header h3'
           )
           const sectionName = sectionHeader?.textContent?.trim() || "General"
-
-          // Extract week number from section name
-          const weekMatch = sectionName.match(
-            /(?:week|module|chapter)\s*(\d+)/i
-          )
+          const weekMatch = sectionName.match(/(?:week|module|chapter)\s*(\d+)/i)
           const weekNumber = weekMatch ? parseInt(weekMatch[1]) : null
 
-          // Get all activity links within this section
           const activityLinks = sectionDiv.querySelectorAll(
             'a[href*="mod/"][href*="id="]'
           )
@@ -315,23 +374,51 @@ export class CourseIndexScraper {
             const activityId = activityMatch[2]
             const activityName = link.textContent?.trim() || "Unknown Activity"
 
+            const isCompleted = CourseIndexScraper.detectCompletion(link)
             activities.push({
               id: activityId,
               name: activityName,
-              completed: false,
+              completed: isCompleted,
+              completedAt: isCompleted ? new Date().toISOString() : undefined,
               type: activityType,
-              sectionName: sectionName,
-              weekNumber: weekNumber
+              sectionName,
+              weekNumber
             })
           })
         })
       }
     }
 
-    return {
-      activities: activities,
-      totalCount: activities.length
+    return { activities, totalCount: activities.length }
+  }
+
+  static detectCompletion(activityLink: Element): boolean {
+    const container = activityLink.closest(
+      'li, .activity, .section-item, [data-region="activity"]'
+    )
+    if (!container) return false
+
+    const completionElement = container.querySelector(
+      '[data-for="completion"], .completion-complete, .completion-y, .complete, [data-action="toggle-manual-completion"]'
+    )
+
+    if (completionElement) {
+      return (
+        completionElement.classList.contains("completion-complete") ||
+        completionElement.classList.contains("completion-y") ||
+        completionElement.classList.contains("complete") ||
+        (completionElement.getAttribute("data-toggletype") === "manual" &&
+          completionElement.getAttribute("aria-checked") === "true") ||
+        completionElement.querySelector(
+          ".fa-check-circle, .fa-check, .icon-completion-complete"
+        ) !== null
+      )
     }
+
+    const checkIcon = container.querySelector(
+      'i.fa-check-circle, i.fa-check, .icon[aria-label*="omplete"]'
+    )
+    return checkIcon !== null
   }
 }
 

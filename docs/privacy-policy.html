@@ -65,14 +65,12 @@
     </ul>
 
     <h2>Data Storage</h2>
-    <p>All data is stored locally on your device using Chrome's built-in storage API (<code>chrome.storage.local</code>). This includes:</p>
+    <p>All data is stored using Chrome's built-in storage APIs. No data is ever sent to our servers or any third party.</p>
     <ul>
-        <li>Course names and identifiers</li>
-        <li>Activity completion status</li>
-        <li>Your study list selections</li>
-        <li>Progress tracking timestamps</li>
+        <li><strong>Course progress data</strong> (activity completion status, timestamps) is stored locally on your device via <code>chrome.storage.local</code> and never leaves your device.</li>
+        <li><strong>Study list</strong> (your bookmarked courses) is stored via <code>chrome.storage.sync</code>, which means Chrome may sync it to other devices where you are signed into the same Google account — using Google's own infrastructure, not ours. This is the same mechanism used by Chrome's own bookmarks and settings. You can disable Chrome Sync at any time in your Chrome settings.</li>
     </ul>
-    <p>This data never leaves your device and is not accessible to us or any third parties.</p>
+    <p>We have no access to any of this data, regardless of which storage mechanism is used.</p>
 
     <h2>Data Transmission</h2>
     <p>This extension does <strong>not</strong>:</p>
